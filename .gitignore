@@ -1,0 +1,15 @@
+# PyCharm 配置
+.idea/
+# Python 缓存
+__pycache__/
+*.pyc
+# 虚拟环境
+venv/
+env/
+# 数据库文件
+*.db
+*.sqlite3
+databases/
+# 临时文件
+temp.py
+test.py

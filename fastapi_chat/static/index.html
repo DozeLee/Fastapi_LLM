@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM 智能聊天助手</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: "Microsoft YaHei", sans-serif;
+        }
+
+        body {
+            background-color: #f5f7fa;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .chat-container {
+            width: 100%;
+            max-width: 800px;
+            height: 80vh;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background-color: #007bff;
+            color: white;
+            padding: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            text-align: center;
+        }
+
+        /* PDF上传区域（简洁集成） */
+        .pdf-upload-area {
+            padding: 10px 15px;
+            border-bottom: 1px solid #eee;
+            background-color: #f8f9fa;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #pdf-file {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+
+        .upload-btn, .clear-rag-btn {
+            padding: 8px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .upload-btn {
+            background-color: #28a745;
+            color: white;
+        }
+
+        .clear-rag-btn {
+            background-color: #dc3545;
+            color: white;
+        }
+
+        .upload-status {
+            font-size: 12px;
+            color: #666;
+            margin-left: 10px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+            background-color: #f9f9f9;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            max-width: 80%;
+            padding: 10px 15px;
+            border-radius: 15px;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+
+        .user-message {
+            background-color: #007bff;
+            color: white;
+            margin-left: auto;
+        }
+
+        .ai-message {
+            background-color: #e9ecef;
+            color: #333;
+            margin-right: auto;
+        }
+
+        .loading-message {
+            color: #666;
+            font-style: italic;
+        }
+
+        .chat-input {
+            display: flex;
+            padding: 15px;
+            border-top: 1px solid #eee;
+            gap: 10px;
+        }
+
+        #message-input {
+            flex: 1;
+            padding: 12px 15px;
+            border: 1px solid #ddd;
+            border-radius: 25px;
+            outline: none;
+            font-size: 14px;
+            resize: none;
+            height: 50px;
+        }
+
+        #send-btn {
+            padding: 0 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        #send-btn:hover {
+            background-color: #0056b3;
+        }
+
+        .chat-actions {
+            padding: 10px 15px;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .action-btn {
+            padding: 8px 15px;
+            background-color: #6c757d;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .action-btn:hover {
+            background-color: #5a6268;
+        }
+
+        /* 滚动条美化 */
+        .chat-messages::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .chat-messages::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb {
+            background: #ccc;
+            border-radius: 10px;
+        }
+
+        .chat-messages::-webkit-scrollbar-thumb:hover {
+            background: #999;
+        }
+    </style>
+</head>
+<body>
+    <div class="chat-container">
+        <div class="chat-header">LLM 智能聊天助手（支持PDF问答）</div>
+
+        <!-- PDF上传区域（简洁集成） -->
+        <div class="pdf-upload-area">
+            <input type="file" id="pdf-file" accept=".pdf" placeholder="选择PDF文件">
+            <button class="upload-btn" id="upload-btn">上传PDF</button>
+            <button class="clear-rag-btn" id="clear-rag-btn">清空PDF</button>
+            <span class="upload-status" id="upload-status"></span>
+        </div>
+
+        <!-- 聊天消息区域 -->
+        <div class="chat-messages" id="chat-messages"></div>
+
+        <!-- 输入区域（同时支持普通聊天和PDF提问） -->
+        <div class="chat-input">
+            <textarea id="message-input" placeholder="输入问题（可提问已上传的PDF）..."></textarea>
+            <button id="send-btn">发送</button>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="chat-actions">
+            <button class="action-btn" id="clear-btn">清空聊天</button>
+            <button class="action-btn" id="history-btn">查看历史</button>
+        </div>
+    </div>
+
+    <script>
+        // DOM元素
+        const chatMessages = document.getElementById('chat-messages');
+        const messageInput = document.getElementById('message-input');
+        const sendBtn = document.getElementById('send-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const historyBtn = document.getElementById('history-btn');
+
+        // PDF相关元素
+        const pdfFileInput = document.getElementById('pdf-file');
+        const uploadBtn = document.getElementById('upload-btn');
+        const clearRagBtn = document.getElementById('clear-rag-btn');
+        const uploadStatus = document.getElementById('upload-status');
+
+        // 添加消息到聊天窗口
+        function addMessageToChat(text, sender, isLoading = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${sender === 'user' ? 'user-message' : 'ai-message'}`;
+
+            if (isLoading) {
+                messageDiv.classList.add('loading-message');
+                messageDiv.textContent = text;
+            } else {
+                // 处理换行符
+                const textWithBr = text.replace(/\n/g, '<br>');
+                messageDiv.innerHTML = textWithBr;
+            }
+
+            chatMessages.appendChild(messageDiv);
+            // 滚动到底部
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            return messageDiv;
+        }
+
+        // 发送普通消息（原有逻辑）
+        async function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            // 添加用户消息
+            addMessageToChat(message, 'user');
+            messageInput.value = '';
+
+            // 添加加载状态
+            const loadingElement = addMessageToChat('正在思考...', 'ai', true);
+
+            try {
+                const response = await fetch('/chat/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ message: message })
+                });
+
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.detail || '请求失败');
+
+                // 移除加载状态，添加AI回答
+                chatMessages.removeChild(loadingElement);
+                addMessageToChat(result.answer, 'ai');
+            } catch (error) {
+                chatMessages.removeChild(loadingElement);
+                addMessageToChat(`错误：${error.message}`, 'ai');
+            }
+        }
+
+        // 上传PDF文件
+        async function uploadPDF() {
+            const file = pdfFileInput.files[0];
+            if (!file) {
+                alert('请选择PDF文件！');
+                return;
+            }
+
+            if (!file.name.endsWith('.pdf')) {
+                alert('仅支持PDF文件！');
+                return;
+            }
+
+            uploadStatus.textContent = '正在上传并处理PDF文件...';
+            uploadBtn.disabled = true;
+
+            const formData = new FormData();
+            formData.append('file', file);
+            formData.append('chunk_size', 400);
+            formData.append('overlap', 30);
+
+            try {
+                const response = await fetch('/chat/rag/upload-pdf', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    uploadStatus.textContent = 'PDF加载成功！可在输入框提问';
+                    addMessageToChat(`✅ PDF文件 "${file.name}" 加载成功，现在可以提问相关问题`, 'ai');
+                } else {
+                    uploadStatus.textContent = `上传失败：${result.detail}`;
+                    alert(`上传失败：${result.detail}`);
+                }
+            } catch (error) {
+                uploadStatus.textContent = `上传失败：${error.message}`;
+                alert(`上传失败：${error.message}`);
+            } finally {
+                uploadBtn.disabled = false;
+                pdfFileInput.value = ''; // 清空文件选择
+            }
+        }
+
+        // 对PDF提问（复用原有输入框，自动判断）
+        async function queryPDF(question) {
+            // 添加提问到聊天界面
+            addMessageToChat(`【PDF提问】${question}`, 'user');
+
+            // 显示加载状态
+            const loadingElement = addMessageToChat('正在检索PDF并生成回答...', 'ai', true);
+
+            try {
+                const response = await fetch('/chat/rag/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        question: question,
+                        n_results: 5,
+                        similarity_threshold: 0.6
+                    })
+                });
+
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.detail || '请求失败');
+
+                // 移除加载状态，添加回答
+                chatMessages.removeChild(loadingElement);
+                addMessageToChat(result.answer, 'ai');
+            } catch (error) {
+                chatMessages.removeChild(loadingElement);
+                addMessageToChat(`【PDF问答错误】${error.message}`, 'ai');
+            }
+        }
+
+        // 清空向量库
+        async function clearRAGCollection() {
+            if (!confirm('确定要清空所有PDF文档数据吗？')) return;
+
+            try {
+                const response = await fetch('/chat/rag/clear', {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    alert(result.message);
+                    uploadStatus.textContent = '';
+                    addMessageToChat('✅ 已清空所有PDF文档数据', 'ai');
+                } else {
+                    alert(`清空失败：${result.detail}`);
+                }
+            } catch (error) {
+                alert(`清空失败：${error.message}`);
+            }
+        }
+
+        // 清空聊天记录
+        function clearChat() {
+            chatMessages.innerHTML = '';
+        }
+
+        // 获取聊天历史
+        async function getChatHistory() {
+            try {
+                const response = await fetch('/chat/history');
+                const result = await response.json();
+
+                if (response.ok) {
+                    clearChat();
+                    if (result.history && result.history.length > 0) {
+                        result.history.forEach(item => {
+                            addMessageToChat(item.human, 'user');
+                            addMessageToChat(item.ai, 'ai');
+                        });
+                    } else {
+                        addMessageToChat('暂无聊天历史', 'ai');
+                    }
+                } else {
+                    alert(`获取历史失败：${result.detail}`);
+                }
+            } catch (error) {
+                alert(`获取历史失败：${error.message}`);
+            }
+        }
+
+        // 清空聊天历史（接口）
+        async function clearChatHistory() {
+            try {
+                const response = await fetch('/chat/clear', {
+                    method: 'POST'
+                });
+
+                const result = await response.json();
+                if (response.ok) {
+                    clearChat();
+                    alert(result.message);
+                } else {
+                    alert(`清空失败：${result.detail}`);
+                }
+            } catch (error) {
+                alert(`清空失败：${error.message}`);
+            }
+        }
+
+        // 绑定事件
+        sendBtn.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        clearBtn.addEventListener('click', clearChatHistory);
+        historyBtn.addEventListener('click', getChatHistory);
+
+        // PDF相关事件
+        uploadBtn.addEventListener('click', uploadPDF);
+        clearRagBtn.addEventListener('click', clearRAGCollection);
+
+        // 页面加载完成提示
+        window.onload = function() {
+            addMessageToChat('你好！我是智能助手，支持PDF文档问答。先上传PDF文件，再输入问题即可提问。', 'ai');
+        };
+    </script>
+</body>
+</html>
