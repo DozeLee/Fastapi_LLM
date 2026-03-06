@@ -9,7 +9,7 @@ import re
 from collections import Counter
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import requests
-from llm.pdf_processor import PDFProcessor
+from llm.pdf_chunk import PDFProcessor
 from llm.VolcengineLLM import VolcengineLLM
 from llm.key_data import llm_key
 # 忽略所有警告
@@ -88,55 +88,63 @@ class OptimizedRAGSystem:
     # ------------------------------
     # 复用PDF处理器的核心方法
     # ------------------------------
+    # def process_pdf_optimized(self, pdf_path, chunk_size=400, overlap=50):
+    #     """优化的PDF处理流程（复用独立的PDFProcessor）"""
+    #     print(f"📚 处理PDF文档: {pdf_path}")
+    #
+    #     # 复用PDF处理器的文件检查
+    #     if not self.pdf_processor.check_pdf_file(pdf_path):
+    #         return None
+    #
+    #     # 复用PDF处理器的内容提取
+    #     full_text, page_texts = self.pdf_processor.extract_pdf_content(pdf_path)
+    #     if not page_texts:
+    #         return None
+    #
+    #     print("使用优化分块策略...")
+    #     documents = []
+    #     metadatas = []
+    #     ids = []
+    #
+    #     for page_info in page_texts:
+    #         page_num = page_info["page"]
+    #         text = page_info["text"]
+    #
+    #         if not text.strip():
+    #             continue
+    #
+    #         # 复用PDF处理器的增强分块
+    #         chunks = self.pdf_processor.enhanced_chunking(text, chunk_size, overlap)
+    #
+    #         for i, chunk in enumerate(chunks):
+    #             if len(chunk.strip()) < 20:  # 过滤太短的块
+    #                 continue
+    #
+    #             chunk_id = f"page{page_num}_chunk{i + 1}"
+    #
+    #             # 存储原始文本（不添加额外标记，避免干扰向量化）
+    #             documents.append(chunk.strip())
+    #
+    #             # 元数据
+    #             metadatas.append({
+    #                 "page": page_num,
+    #                 "chunk_id": chunk_id,
+    #                 "source": pdf_path,
+    #                 "length": len(chunk)
+    #             })
+    #
+    #             ids.append(chunk_id)
+    #
+    #     print(f"✅ 处理完成: {len(documents)} 个文本块")
+    #     return documents, metadatas, ids
+
     def process_pdf_optimized(self, pdf_path, chunk_size=400, overlap=50):
-        """优化的PDF处理流程（复用独立的PDFProcessor）"""
+        """优化的PDF处理流程（极简调用）"""
         print(f"📚 处理PDF文档: {pdf_path}")
-
-        # 复用PDF处理器的文件检查
-        if not self.pdf_processor.check_pdf_file(pdf_path):
-            return None
-
-        # 复用PDF处理器的内容提取
-        full_text, page_texts = self.pdf_processor.extract_pdf_content(pdf_path)
-        if not page_texts:
-            return None
-
-        print("使用优化分块策略...")
-        documents = []
-        metadatas = []
-        ids = []
-
-        for page_info in page_texts:
-            page_num = page_info["page"]
-            text = page_info["text"]
-
-            if not text.strip():
-                continue
-
-            # 复用PDF处理器的增强分块
-            chunks = self.pdf_processor.enhanced_chunking(text, chunk_size, overlap)
-
-            for i, chunk in enumerate(chunks):
-                if len(chunk.strip()) < 20:  # 过滤太短的块
-                    continue
-
-                chunk_id = f"page{page_num}_chunk{i + 1}"
-
-                # 存储原始文本（不添加额外标记，避免干扰向量化）
-                documents.append(chunk.strip())
-
-                # 元数据
-                metadatas.append({
-                    "page": page_num,
-                    "chunk_id": chunk_id,
-                    "source": pdf_path,
-                    "length": len(chunk)
-                })
-
-                ids.append(chunk_id)
-
-        print(f"✅ 处理完成: {len(documents)} 个文本块")
+        # 直接调用PDFProcessor的封装接口，无需手动遍历/过滤
+        documents, metadatas, ids = self.pdf_processor.get_pdf_chunks_for_rag(pdf_path, chunk_size, overlap)
         return documents, metadatas, ids
+
 
     def load_pdf_document(self, pdf_path, chunk_size=400, overlap=50):
         """加载PDF文档到向量数据库"""
@@ -284,7 +292,7 @@ class OptimizedRAGSystem:
         1. 如果资料中有相关信息，请基于资料回答
         2. 如果资料中没有相关信息，请明确说明"资料中未找到相关信息"
         3. 回答时请注明信息来源的页码（如果资料中提供了页码）
-        4. 不要编造资料中不存在的信息
+        4. 如果上下文强烈暗示了答案，即便未说明也可以推理回答
         
         请开始回答："""
         return prompt
@@ -354,8 +362,8 @@ class OptimizedRAGSystem:
             print(f"     内容: {doc[:100]}...")
             temp.append(doc+"\n")
 
-        with open("temp1.txt", 'w', encoding='utf-8') as f:
-            f.write(''.join(temp))
+        # with open("temp1.txt", 'w', encoding='utf-8') as f:
+        #     f.write(''.join(temp))
         return self.query_optimized(question, n_results)
 
     def get_collection_info(self):
@@ -397,11 +405,11 @@ if __name__ == "__main__":
     # 测试查询
     test_queries = [
         # "电池保养有什么建议？",
-        "Touch ID有哪些功能？",
+        # "Touch ID有哪些功能？",
         # "MacBook如何连接WiFi？",
         # "如何延长电池寿命？",
         # "'延长电池寿命'这个关键词相关语句有哪些",
-        # "MacBook Air的重量是多少？",
+        "MacBook Air的重量是多少？",
         # "优化MacBookAir4的续航有哪些可行的操作方法"
     ]
 
