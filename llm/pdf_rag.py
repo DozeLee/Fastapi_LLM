@@ -214,7 +214,12 @@ class OptimizedRAGSystem:
         self.performance_stats['total_documents'] = len(documents)
 
     def query_optimized(self, question, n_results=5, similarity_threshold=0.6):
-        """优化的查询方法"""
+        """
+        如果有就取最高余弦值，没有就返回
+        question：用户问题（字符串
+        n_results：初次检索返回的最大文档数（实际会乘以 2 再截取）
+        similarity_threshold：相似度阈值（余弦距离转相似度）
+        """
         if not question.strip():
             return "查询问题不能为空"
 
@@ -298,7 +303,7 @@ class OptimizedRAGSystem:
         return prompt
 
     def _call_llm(self, prompt):
-        """LLM调用方法：添加限流重试和请求间隔"""
+        """调用大模型并处理限流重试"""
         if self.llm_client is None:
             return "大模型服务暂不可用"
 
@@ -407,9 +412,9 @@ if __name__ == "__main__":
         # "电池保养有什么建议？",
         # "Touch ID有哪些功能？",
         # "MacBook如何连接WiFi？",
-        # "如何延长电池寿命？",
+        "如何延长电池寿命？",
         # "'延长电池寿命'这个关键词相关语句有哪些",
-        "MacBook Air的重量是多少？",
+        # "MacBook Air的重量是多少？",
         # "优化MacBookAir4的续航有哪些可行的操作方法"
     ]
 
