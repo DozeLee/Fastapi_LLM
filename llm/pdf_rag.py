@@ -151,6 +151,15 @@ class OptimizedRAGSystem:
         print(f"\n📂 开始处理PDF文档: {pdf_path}")
         start_time = time.time()
 
+        # 存在则跳过
+        existing_docs = self.collection.get(
+            where={"source": pdf_path},
+            include=["metadatas"]
+        )
+        if existing_docs["metadatas"]:
+            print(f"✅ PDF文件 {pdf_path} 已存在于Chroma中，无需重复处理")
+            return True
+
         result = self.process_pdf_optimized(pdf_path, chunk_size, overlap)
         if not result:
             return False
@@ -397,7 +406,7 @@ if __name__ == "__main__":
     rag = OptimizedRAGSystem(collection_name="optimized_pdf")
 
     # 清空并重新加载
-    rag.clear_collection()
+    # rag.clear_collection()
 
     # 加载PDF文档
     pdf_path = "/Users/dozelee/PycharmProjects/FastAPIProject/LLM/resource/mac_user.pdf"
