@@ -4,9 +4,7 @@ from sentence_transformers import SentenceTransformer
 import os
 import warnings
 import time
-import fitz  # PyMuPDF
-import re
-from collections import Counter
+from llm.neo4j_graph import Neo4jKnowledgeGraph
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 import requests
 from llm.pdf_chunk import PDFProcessor
@@ -14,135 +12,125 @@ from llm.VolcengineLLM import VolcengineLLM
 from llm.key_data import llm_key
 # 忽略所有警告
 warnings.filterwarnings("ignore")
-
+os.environ['TRANSFORMERS_OFFLINE'] = '1'
+# 常量定义
+CONST_CONFIG = {
+    "device": "cpu",  # 强制CPU
+    "model_path": "/Users/dozelee/PycharmProjects/FastAPIProject/LLM/all-MiniLM-L6-v2",
+    "chroma_config": {
+        "path": "../fastapi_chat/databases/chroma_db",
+        "collection_name": "pdf_document",
+        "hnsw_space": "cosine"
+    },
+    "llm_config": {
+        "api_key": llm_key.api_key,
+        "model_name": "doubao-seed-1-6-thinking-250715",
+        "temperature": 0.5,
+        "max_tokens": 1024
+    },
+    "neo4j_config": {
+        "uri": "bolt://localhost:7687",
+        "username": "neo4j",
+        "password": "neo4j123"
+    }
+}
 
 class OptimizedRAGSystem:
-    def __init__(self, chroma_path="../fastapi_chat/databases/chroma_db", collection_name="pdf_document"):
-        """初始化 RAG 系统，支持PDF文档处理"""
-        # 设置环境
-        os.environ['TRANSFORMERS_OFFLINE'] = '1'
+    def __init__(self,collection_name=None):
+        """
+        初始化RAG系统
+        :param collection_name: 自定义Chroma集合名（可选，默认用BASE_CONFIG中的值）
+        """
+        self.config = CONST_CONFIG  # 配置集中管理，减少零散self属性
+        self.performance_stats = {"init_time": 0}  # 性能统计初始化
+        self.modules = {}  # 模块实例集中存储
 
-        self.performance_stats = {}
         start_time = time.time()
-
-        # 设备选择 - 强制使用 CPU（避免兼容性问题）
-        self.device = "cpu"
-        print("ℹ️ 使用 CPU 运行")
-
-        # 初始化向量数据库
-        print("📁 初始化向量数据库...")
-        db_start = time.time()
-        self.client = PersistentClient(path=chroma_path)
-        self.collection = self.client.get_or_create_collection(
-            name=collection_name,
-            metadata={"hnsw:space": "cosine"}  # 使用余弦相似度
-        )
-        db_time = time.time() - db_start
-        print(f"  数据库初始化完成: {db_time:.2f}秒")
-
-        # 加载嵌入模型 - 使用更小的模型
-        print("🧠 加载嵌入模型...")
-        model_start = time.time()
-
-        # 使用更小的模型加速加载
-        model_name = "/Users/dozelee/PycharmProjects/FastAPIProject/LLM/all-MiniLM-L6-v2"
-
-        try:
-            self.embed_model = SentenceTransformer(model_name, device=self.device)
-            # 简单的预热
-            self.embed_model.encode(["warmup"])
-            model_time = time.time() - model_start
-            print(f"  模型加载完成: {model_time:.2f}秒")
-            print(f"  模型名称: {model_name}")
-            print(f"  向量维度: {self.embed_model.get_sentence_embedding_dimension()}")
-        except Exception as e:
-            print(f"❌ 模型加载失败: {e}")
-            raise
-
-        # 初始化大模型客户端
-        print("🌐 初始化大模型客户端...")
-        llm_start = time.time()
-        try:
-            self.llm_client = VolcengineLLM(
-                api_key=llm_key.api_key,
-                model_name="doubao-seed-1-6-thinking-250715",
-                temperature=0.5,
-                max_tokens=1024
-            )
-            llm_time = time.time() - llm_start
-            print(f"  大模型客户端就绪: {llm_time:.2f}秒")
-        except Exception as e:
-            print(f"❌ 大模型客户端初始化失败: {e}")
-            self.llm_client = None
-
-        # 初始化PDF处理器（核心：复用独立模块）
-        self.pdf_processor = PDFProcessor()
-
-        # 总初始化时间
-        total_time = time.time() - start_time
-        print(f"🎯 系统初始化总时间: {total_time:.2f}秒")
+        print("🎯 开始初始化RAG系统...")
         print("=" * 50)
 
-        self.performance_stats['init_time'] = total_time
+        # ==========  核心模块初始化（结构化拆分） ==========
+        self._init_vector_db()  # 向量库初始化
+        self._init_embed_model()  # 嵌入模型初始化
+        self._init_llm_client()  # 大模型客户端初始化
+        self._init_pdf_processor()  # PDF处理器初始化
+        self._init_neo4j_processor()  # Neo4j处理器初始化
 
-    # ------------------------------
-    # 复用PDF处理器的核心方法
-    # ------------------------------
-    # def process_pdf_optimized(self, pdf_path, chunk_size=400, overlap=50):
-    #     """优化的PDF处理流程（复用独立的PDFProcessor）"""
-    #     print(f"📚 处理PDF文档: {pdf_path}")
-    #
-    #     # 复用PDF处理器的文件检查
-    #     if not self.pdf_processor.check_pdf_file(pdf_path):
-    #         return None
-    #
-    #     # 复用PDF处理器的内容提取
-    #     full_text, page_texts = self.pdf_processor.extract_pdf_content(pdf_path)
-    #     if not page_texts:
-    #         return None
-    #
-    #     print("使用优化分块策略...")
-    #     documents = []
-    #     metadatas = []
-    #     ids = []
-    #
-    #     for page_info in page_texts:
-    #         page_num = page_info["page"]
-    #         text = page_info["text"]
-    #
-    #         if not text.strip():
-    #             continue
-    #
-    #         # 复用PDF处理器的增强分块
-    #         chunks = self.pdf_processor.enhanced_chunking(text, chunk_size, overlap)
-    #
-    #         for i, chunk in enumerate(chunks):
-    #             if len(chunk.strip()) < 20:  # 过滤太短的块
-    #                 continue
-    #
-    #             chunk_id = f"page{page_num}_chunk{i + 1}"
-    #
-    #             # 存储原始文本（不添加额外标记，避免干扰向量化）
-    #             documents.append(chunk.strip())
-    #
-    #             # 元数据
-    #             metadatas.append({
-    #                 "page": page_num,
-    #                 "chunk_id": chunk_id,
-    #                 "source": pdf_path,
-    #                 "length": len(chunk)
-    #             })
-    #
-    #             ids.append(chunk_id)
-    #
-    #     print(f"✅ 处理完成: {len(documents)} 个文本块")
-    #     return documents, metadatas, ids
+        self.performance_stats['init_time'] = time.time() - start_time
+        print("=" * 50)
+        print(f"✅ 系统初始化完成 | 总耗时: {self.performance_stats['init_time']:.2f}秒")
+
+    def _init_vector_db(self):
+        """初始化向量数据库（独立子方法）"""
+        print(f"📁 初始化向量数据库（{self.config['chroma_config']['path']}）...")
+        start = time.time()
+        self.modules['chroma_client'] = PersistentClient(path=self.config['chroma_config']['path'])
+        self.modules['chroma_collection'] = self.modules['chroma_client'].get_or_create_collection(
+            name=self.config['chroma_config']['collection_name'],
+            metadata={"hnsw:space": self.config['chroma_config']['hnsw_space']}
+        )
+        print(f"  ✅ 向量库就绪 | 耗时: {time.time() - start:.2f}秒")
+
+    def _init_embed_model(self):
+        """初始化嵌入模型（独立子方法）"""
+        print(f"🧠 加载嵌入模型（{self.config['model_path']}）...")
+        start = time.time()
+        try:
+            self.modules['embed_model'] = SentenceTransformer(
+                self.config['model_path'],
+                device=self.config['device']
+            )
+            self.modules['embed_model'].encode(["warmup"])  # 预热
+            # 打印模型信息（精简格式）
+            dim = self.modules['embed_model'].get_sentence_embedding_dimension()
+            print(f"  ✅ 模型加载完成 | 耗时: {time.time() - start:.2f}秒 | 维度: {dim} | 设备: {self.config['device']}")
+        except Exception as e:
+            print(f"  ❌ 模型加载失败: {e}")
+            raise
+
+    def _init_llm_client(self):
+        """初始化大模型客户端（独立子方法）"""
+        print("🌐 初始化大模型客户端...")
+        start = time.time()
+        try:
+            self.modules['llm_client'] = VolcengineLLM(
+                api_key=self.config['llm_config']['api_key'],
+                model_name=self.config['llm_config']['model_name'],
+                temperature=self.config['llm_config']['temperature'],
+                max_tokens=self.config['llm_config']['max_tokens']
+            )
+            print(f"  ✅ 大模型就绪 | 耗时: {time.time() - start:.2f}秒")
+        except Exception as e:
+            print(f"  ⚠️ 大模型客户端初始化失败: {e}")
+            self.modules['llm_client'] = None
+
+    def _init_pdf_processor(self):
+        """初始化PDF处理器（独立子方法）"""
+        print("📄 初始化PDF处理器...")
+        self.modules['pdf_processor'] = PDFProcessor()
+        print("  ✅ PDF处理器就绪")
+
+    def _init_neo4j_processor(self):
+        """初始化Neo4j处理器（独立子方法）"""
+        print("🗺️ 初始化Neo4j知识图谱...")
+        try:
+            self.modules['neo4j_processor'] = Neo4jKnowledgeGraph(
+                uri=self.config['neo4j_config']['uri'],
+                username=self.config['neo4j_config']['username'],
+                password=self.config['neo4j_config']['password']
+            )
+            print("  ✅ Neo4j处理器就绪")
+        except Exception as e:
+            print(f"  ⚠️ Neo4j模块未初始化（不影响原有功能）: {e}")
+            self.modules['neo4j_processor'] = None
 
     def process_pdf_optimized(self, pdf_path, chunk_size=400, overlap=50):
-        """优化的PDF处理流程（极简调用）"""
+        """优化的PDF处理流程"""
         print(f"📚 处理PDF文档: {pdf_path}")
-        # 直接调用PDFProcessor的封装接口，无需手动遍历/过滤
-        documents, metadatas, ids = self.pdf_processor.get_pdf_chunks_for_rag(pdf_path, chunk_size, overlap)
+        # 直接调用PDFProcessor的封装接口
+        documents, metadatas, ids = self.modules['pdf_processor'].get_pdf_chunks_for_rag(
+            pdf_path, chunk_size, overlap
+        )
         return documents, metadatas, ids
 
 
@@ -152,7 +140,7 @@ class OptimizedRAGSystem:
         start_time = time.time()
 
         # 存在则跳过
-        existing_docs = self.collection.get(
+        existing_docs = self.modules['chroma_collection'].get(
             where={"source": pdf_path},
             include=["metadatas"]
         )
@@ -195,7 +183,7 @@ class OptimizedRAGSystem:
         start_time = time.time()
 
         # 单批次处理，减少编码开销
-        embeddings = self.embed_model.encode(
+        embeddings = self.modules['embed_model'].encode(
             documents,
             convert_to_tensor=False,
             show_progress_bar=True,  # 显示进度条
@@ -208,7 +196,7 @@ class OptimizedRAGSystem:
             ids = [f"doc_{i}" for i in range(len(documents))]
 
         # 存入向量数据库
-        self.collection.add(
+        self.modules['chroma_collection'].add(
             documents=documents,
             embeddings=embeddings.tolist(),
             metadatas=metadatas,
@@ -236,10 +224,10 @@ class OptimizedRAGSystem:
         start_time = time.time()
 
         # 编码查询
-        query_embedding = self.embed_model.encode(question, normalize_embeddings=True)
+        query_embedding = self.modules['embed_model'].encode(question, normalize_embeddings=True)
 
         # 检索
-        results = self.collection.query(
+        results = self.modules['chroma_collection'].query(
             query_embeddings=[query_embedding.tolist()],
             n_results=min(n_results * 2, 20),
             include=["documents", "metadatas", "distances"]
@@ -313,7 +301,7 @@ class OptimizedRAGSystem:
 
     def _call_llm(self, prompt):
         """调用大模型并处理限流重试"""
-        if self.llm_client is None:
+        if self.modules['llm_client'] is None:
             return "大模型服务暂不可用"
 
         # 定义重试逻辑：最多重试3次，间隔2s→4s→8s（指数退避）
@@ -327,7 +315,7 @@ class OptimizedRAGSystem:
             time.sleep(1)
             try:
                 # 调用 VolcengineLLM，捕获HTTP错误（如429）
-                response = self.llm_client.invoke(prompt)
+                response = self.modules['llm_client'].invoke(prompt)
                 # 若返回的是错误提示（如VolcengineLLM内部捕获429后返回字符串），手动抛出异常触发重试
                 if isinstance(response, str) and ("429" in response or "Too Many Requests" in response):
                     raise requests.exceptions.HTTPError(f"429 Too Many Requests: {response}")
@@ -354,10 +342,10 @@ class OptimizedRAGSystem:
         print(f"🔍 调试查询: '{question}'")
 
         # 编码查询问题
-        query_embedding = self.embed_model.encode(question)
+        query_embedding = self.modules['embed_model'].encode(question)
 
         # 检索结果
-        results = self.collection.query(
+        results = self.modules['chroma_collection'].query(
             query_embeddings=[query_embedding.tolist()],
             n_results=n_results,
             include=["documents", "metadatas", "distances"]
@@ -383,7 +371,7 @@ class OptimizedRAGSystem:
     def get_collection_info(self):
         """获取集合信息"""
         try:
-            count = self.collection.count()
+            count = self.modules['chroma_collection'].count()
             print(f"📊 集合信息: 文档数量: {count}")
             return count
         except Exception as e:
@@ -393,9 +381,9 @@ class OptimizedRAGSystem:
     def clear_collection(self):
         """清空当前集合"""
         try:
-            count_before = self.collection.count()
-            self.client.delete_collection(name=self.collection.name)
-            self.collection = self.client.get_or_create_collection(name=self.collection.name)
+            count_before = self.modules['chroma_collection'].count()
+            self.modules['chroma_client'].delete_collection(name=self.modules['chroma_collection'].name)
+            self.modules['chroma_collection'] = self.modules['chroma_client'].get_or_create_collection(name=self.modules['chroma_collection'].name)
             print(f"🧹 已清空集合，之前有 {count_before} 个文档")
         except Exception as e:
             print(f"❌ 清空集合失败: {e}")
